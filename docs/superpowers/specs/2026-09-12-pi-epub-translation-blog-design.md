@@ -76,8 +76,10 @@ Before destructive Git operations:
 4. Create one root commit with a clear message such as `Initial import: Pi EPUB translator`.
 5. Rename the existing GitHub repository in place.
 6. Verify that the renamed remote is still private and that no unexpected remote movement occurred.
-7. Force-replace only remote `main` with the clean root commit using an explicit expected-old-SHA lease; never use an unguarded `--force`.
-8. Verify the remote `main` tree, default branch, visibility, and commit count.
+7. Use the HTTPS remote authenticated by the existing GitHub CLI credential; the configured SSH key belongs to a different GitHub account.
+8. Force-replace only remote `main` with the clean root commit using an explicit expected-old-SHA lease; never use an unguarded `--force`.
+9. Align the local `master` checkout to the clean remote commit while preserving its pre-existing `.gitignore` bytes.
+10. Verify the remote and local `main` tree, default branch, visibility, and commit count.
 
 The old history is not kept as a visible remote branch. The recovery bundle remains local until the user confirms the cleanup is no longer needed.
 

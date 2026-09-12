@@ -4,9 +4,9 @@
 
 **Goal:** Move the reusable skill to `$HOME/.agents/skills`, reduce the repository to the Pi extension plus README/config, and replace the existing private GitHub repository history with one clean root commit under `ltdthanhdat/pi-epub-translator`.
 
-**Architecture:** First update the user-level skill and product README in an isolated translator worktree. Then create a local recovery bundle and a clean Git snapshot containing only `.pi/extensions/epub-translate/`, `.gitignore`, and `README.md`. Rename the existing private GitHub repository in place and guarded-force-update only its `main` branch with an explicit expected-old-SHA lease.
+**Architecture:** First update the user-level skill and product README in an isolated translator worktree. Then create a local recovery bundle and a clean Git snapshot containing only `.pi/extensions/epub-translate/`, `.gitignore`, and `README.md`. Rename the existing private GitHub repository in place and guarded-force-update only its `main` branch with an explicit expected-old-SHA lease over the HTTPS remote authenticated by GitHub CLI.
 
-**Tech Stack:** Git, GitHub CLI (`gh`), GitHub SSH remote, Python, Node.js, Pi CLI.
+**Tech Stack:** Git, GitHub CLI (`gh`), GitHub HTTPS remote, Python, Node.js, Pi CLI.
 
 **Spec:** `docs/superpowers/specs/2026-09-12-pi-epub-translation-blog-design.md`
 
@@ -236,17 +236,17 @@ Expected: URL is `https://github.com/ltdthanhdat/pi-epub-translator`, visibility
 - [ ] **Step 2: Point the temporary clean repository at the renamed remote**
 
 ```bash
-git -C /tmp/pi-epub-translator-clean remote add origin git@github.com:ltdthanhdat/pi-epub-translator.git
+git -C /tmp/pi-epub-translator-clean remote add origin https://github.com/ltdthanhdat/pi-epub-translator.git
 git -C /tmp/pi-epub-translator-clean remote -v
 ```
 
-Expected: the temporary repository has the renamed SSH URL for fetch and push.
+Expected: the temporary repository has the renamed HTTPS URL for fetch and push, using the existing GitHub CLI credential helper.
 
 - [ ] **Step 3: Replace only the expected remote `main` commit**
 
 ```bash
 EXPECTED=$(cat /tmp/pi-epub-translator-remote-main.sha)
-ACTUAL=$(git ls-remote git@github.com:ltdthanhdat/pi-epub-translator.git refs/heads/main | awk '{print $1}')
+ACTUAL=$(git ls-remote https://github.com/ltdthanhdat/pi-epub-translator.git refs/heads/main | awk '{print $1}')
 test "$ACTUAL" = "$EXPECTED"
 git -C /tmp/pi-epub-translator-clean push --force-with-lease=refs/heads/main:$EXPECTED origin HEAD:main
 ```
@@ -262,20 +262,21 @@ gh repo view ltdthanhdat/pi-epub-translator --json name,visibility,defaultBranch
 
 Expected: `main` is default and visibility remains `PRIVATE`.
 
-### Task 5: Verify the clean remote and local safety
+### Task 5: Align and verify the clean remote and local checkout
 
 **Files:**
-- Read only: `/home/datlt/workspace/translator`
+- Modify local checkout: `/home/datlt/workspace/translator`
 - Read only: `/tmp/pi-epub-translator-clean`
+- Preserve: `/tmp/pi-epub-translator-local-gitignore`
 
 **Interfaces:**
 - Consumes: the renamed private remote and recovery bundle.
-- Produces: evidence that the remote is clean and that the original local working tree was not destructively reset.
+- Produces: a local `master` checkout aligned to the clean root commit, with the pre-existing `.gitignore` modification restored byte-for-byte.
 
 - [ ] **Step 1: Verify remote commit count and tree**
 
 ```bash
-REMOTE_HEAD=$(git ls-remote git@github.com:ltdthanhdat/pi-epub-translator.git refs/heads/main | awk '{print $1}')
+REMOTE_HEAD=$(git ls-remote https://github.com/ltdthanhdat/pi-epub-translator.git refs/heads/main | awk '{print $1}')
 test -n "$REMOTE_HEAD"
 test "$(git -C /tmp/pi-epub-translator-clean rev-parse HEAD)" = "$REMOTE_HEAD"
 git -C /tmp/pi-epub-translator-clean ls-tree -r --name-only HEAD
@@ -283,23 +284,34 @@ git -C /tmp/pi-epub-translator-clean ls-tree -r --name-only HEAD
 
 Expected: remote `main` equals the clean root commit and contains only the approved product tree.
 
-- [ ] **Step 2: Verify local recovery artifact and original checkout state**
+- [ ] **Step 2: Preserve the local `.gitignore` before aligning `master`**
+
+```bash
+cp /home/datlt/workspace/translator/.gitignore /tmp/pi-epub-translator-local-gitignore
+git -C /home/datlt/workspace/translator fetch origin main
+```
+
+Expected: the exact pre-existing `.gitignore` bytes are saved and `origin/main` points at the clean remote commit.
+
+- [ ] **Step 3: Align local `master` and restore only `.gitignore`**
+
+```bash
+git -C /home/datlt/workspace/translator reset --hard origin/main
+cp /tmp/pi-epub-translator-local-gitignore /home/datlt/workspace/translator/.gitignore
+test "$(git -C /home/datlt/workspace/translator rev-parse HEAD)" = "$(git -C /tmp/pi-epub-translator-clean rev-parse HEAD)"
+```
+
+Expected: local `master` has the clean root commit and product tree; `.gitignore` is the only intentional local modification. The ignored local EPUB input remains available.
+
+- [ ] **Step 4: Verify recovery artifact and keep the remote private**
 
 ```bash
 test -s /tmp/pi-epub-translator-before-clean.bundle
-git -C /home/datlt/workspace/translator status --short --branch
-git -C /home/datlt/workspace/translator/.worktrees/pi-epub-translation-blog status --short --branch
-```
-
-Expected: recovery bundle exists; the original `.gitignore` modification is not silently discarded; no EPUB or generated artifact is staged.
-
-- [ ] **Step 3: Keep the remote private for review**
-
-```bash
 test "$(gh repo view ltdthanhdat/pi-epub-translator --json visibility --jq '.visibility')" = PRIVATE
+git -C /home/datlt/workspace/translator status --short --branch
 ```
 
-Expected: command exits 0.
+Expected: recovery bundle exists, visibility is `PRIVATE`, and no EPUB or generated artifact is staged.
 
 ---
 
@@ -309,7 +321,7 @@ Run after all tasks:
 
 ```bash
 gh repo view ltdthanhdat/pi-epub-translator --json name,visibility,defaultBranchRef,url
-REMOTE_HEAD=$(git ls-remote git@github.com:ltdthanhdat/pi-epub-translator.git refs/heads/main | awk '{print $1}')
+REMOTE_HEAD=$(git ls-remote https://github.com/ltdthanhdat/pi-epub-translator.git refs/heads/main | awk '{print $1}')
 test -n "$REMOTE_HEAD"
 test "$(git -C /tmp/pi-epub-translator-clean rev-parse HEAD)" = "$REMOTE_HEAD"
 test "$(git -C /tmp/pi-epub-translator-clean rev-list --count HEAD)" -eq 1
