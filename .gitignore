@@ -1,0 +1,6 @@
+.parallel-translate/
+input/
+output/
+.worktrees/
+docs/superpowers/
+__pycache__/
