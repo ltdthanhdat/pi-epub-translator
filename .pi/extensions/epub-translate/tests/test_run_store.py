@@ -1,3 +1,5 @@
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -82,6 +84,24 @@ class RunStoreLifecycleTest(unittest.TestCase):
 
         self.assertFalse(self.store.complete(old.id, "worker-a", old.lease_token, "results/old.xhtml"))
         self.assertTrue(self.store.complete(current.id, "worker-b", current.lease_token, "results/current.xhtml"))
+
+    def test_retry_reopens_merge_state_after_terminal_job_failure(self):
+        claimed = self.store.claim("worker-a", now=100)
+        self.assertTrue(self.store.fail(claimed.id, "worker-a", claimed.lease_token, "failed"))
+        self.store.mark_failed("terminal")
+
+        self.assertEqual(1, self.store.retry_failed())
+        self.assertEqual("pending", self.store.summary()["mergeState"])
+
+    def test_cli_summary_emits_one_machine_readable_json_object(self):
+        completed = subprocess.run(
+            [sys.executable, str(Path(__file__).parents[1] / "run_store.py"), "summary", "--run", str(self.tmp)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        self.assertEqual(self.store.summary(), json.loads(completed.stdout))
 
     def test_cancel_blocks_new_claims_and_retry_resets_only_failed_jobs(self):
         claimed = self.store.claim("worker-a", now=100)
@@ -218,6 +238,17 @@ class RunStoreLifecycleTest(unittest.TestCase):
         result_path = Path(result["result_path"])
         self.assertIn("pagebreak", result_path.read_text())
         self.assertTrue(store.summary()["done"] == 1)
+
+    def test_cli_merge_failure_marks_run_failed(self):
+        completed = subprocess.run(
+            [sys.executable, str(Path(__file__).parents[1] / "run_store.py"), "merge", "--run", str(self.tmp)],
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(0, completed.returncode)
+        self.assertEqual("failed", self.store.summary()["state"])
+        self.assertIn("unfinished jobs", self.store.summary()["error"])
 
     def test_merge_builds_verified_epub_without_modifying_source(self):
         source = self.tmp / "source"

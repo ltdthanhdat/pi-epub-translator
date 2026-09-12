@@ -126,8 +126,8 @@ async function analyzeJson<T>(
   const response = await pi.exec("pi", [
     "--approve",
     "--no-session",
-    "--no-extensions",
     "--no-context-files",
+    "--no-builtin-tools",
     "--no-skills",
     "--no-prompt-templates",
     "--no-themes",

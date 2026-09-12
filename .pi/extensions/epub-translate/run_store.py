@@ -298,8 +298,9 @@ class RunStore:
                     "UPDATE jobs SET state='pending', attempts=0, error=NULL WHERE state='failed'"
                 )
             db.execute(
-                """UPDATE runs SET cancel_requested=0, state='running', error=NULL, updated_at=?
-                   WHERE id=1""",
+                """UPDATE runs SET cancel_requested=0, state='running', error=NULL,
+                       merge_state=CASE WHEN merge_state='completed' THEN merge_state ELSE 'pending' END,
+                       updated_at=? WHERE id=1""",
                 (int(time.time()),),
             )
             return cursor.rowcount
