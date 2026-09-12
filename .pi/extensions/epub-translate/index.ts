@@ -1,13 +1,17 @@
 import { readdir, stat } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { runBlockingOperation } from "./blocking-operation.ts";
 import { formatProgress, type RunSummary } from "./progress.ts";
 import {
+  inferLanguageCode,
   modelIdentifier,
+  normalizeScopeAnalysis,
   parseJsonResponse,
   selectableModels,
   selectableThinkingLevels,
   type ModelDescriptor,
+  type NormalizedScopeAnalysis,
   type ScopedModel,
 } from "./wizard.ts";
 import { registerWorkerTools, runHelper, spawnDetachedWorker } from "./worker-tools.ts";
@@ -29,7 +33,15 @@ interface GlossaryEntry {
 }
 
 interface GlossaryAnalysis {
+  translate?: unknown;
+  keep?: unknown;
+  target_language_code?: unknown;
   entries?: GlossaryEntry[];
+}
+
+interface AnalysisResult {
+  scope: NormalizedScopeAnalysis;
+  glossary: string;
 }
 
 let progressTimer: ReturnType<typeof setInterval> | undefined;
@@ -97,23 +109,73 @@ async function chooseWorkers(ctx: ExtensionContext): Promise<number | undefined>
   }
 }
 
-async function reviewScope(ctx: ExtensionContext, documents: DocumentInfo[]): Promise<string[] | undefined> {
-  const selected: string[] = [];
-  for (const document of documents) {
-    const suggested = document.in_spine || document.is_nav ? "translate" : "keep";
-    const description = [
-      document.path,
-      document.title ? `title: ${document.title}` : "no title",
-      document.in_spine ? "in spine" : "outside spine",
-      document.is_nav ? "navigation" : "",
-      document.epub_types.length ? `types: ${document.epub_types.join(", ")}` : "",
-      `recommended: ${suggested}`,
-    ].filter(Boolean).join(" · ");
-    const decision = await ctx.ui.select(description, ["translate", "keep"]);
-    if (!decision) return undefined;
-    if (decision === "translate") selected.push(document.path);
+function scopeSummary(language: string, code: string, documents: DocumentInfo[], scope: NormalizedScopeAnalysis): string {
+  const preview = (paths: string[]) => {
+    const shown = paths.slice(0, 5).join(", ");
+    return paths.length > 5 ? `${shown}, +${paths.length - 5} more` : shown || "none";
+  };
+  return [
+    `Target: ${language} (${code})`,
+    `Translate ${scope.translate.length}: ${preview(scope.translate)}`,
+    `Keep ${scope.keep.length}: ${preview(scope.keep)}`,
+    `AI classified ${documents.length} XHTML documents; scope can be edited as one list.`,
+  ].join("\n");
+}
+
+async function editDocumentScope(
+  ctx: ExtensionContext,
+  documents: DocumentInfo[],
+  selectedPaths: string[],
+): Promise<string[] | undefined> {
+  const known = new Set(documents.map((document) => document.path));
+  const edited = await ctx.ui.editor(
+    "Documents to translate (one EPUB path per line)",
+    selectedPaths.join("\n"),
+  );
+  if (edited === undefined) return undefined;
+  const paths = [...new Set(edited.split(/\r?\n/).map((path) => path.trim()).filter((path) => path.length > 0))];
+  const unknown = paths.filter((path) => !known.has(path));
+  if (unknown.length > 0) {
+    ctx.ui.notify(`Unknown EPUB document: ${unknown[0]}`, "warning");
+    return selectedPaths;
   }
-  return selected;
+  return paths;
+}
+
+async function reviewPlanAndGlossary(
+  ctx: ExtensionContext,
+  language: string,
+  code: string,
+  documents: DocumentInfo[],
+  scope: NormalizedScopeAnalysis,
+  initialGlossary: string,
+): Promise<{ selectedPaths: string[]; glossary: string } | undefined> {
+  let selectedPaths = [...scope.translate];
+  let glossaryText = initialGlossary;
+  while (true) {
+    const action = await ctx.ui.select(scopeSummary(language, code, documents, {
+      ...scope,
+      translate: selectedPaths,
+      keep: documents.map((document) => document.path).filter((path) => !selectedPaths.includes(path)),
+    }), ["Use AI scope and review glossary", "Edit document scope", "Cancel"]);
+    if (!action || action === "Cancel") return undefined;
+    if (action === "Edit document scope") {
+      const edited = await editDocumentScope(ctx, documents, selectedPaths);
+      if (edited !== undefined) selectedPaths = edited;
+      continue;
+    }
+    const editedGlossary = await ctx.ui.editor("Review glossary (source = target; # starts a note)", glossaryText);
+    if (editedGlossary === undefined) return undefined;
+    glossaryText = editedGlossary;
+    const locked = await ctx.ui.confirm(
+      "Lock glossary and start translation?",
+      "Workers will use this exact glossary for every fragment in this run.",
+    );
+    if (locked && selectedPaths.length > 0) return { selectedPaths, glossary: glossaryText };
+    if (selectedPaths.length === 0) {
+      ctx.ui.notify("Select at least one document to translate.", "warning");
+    }
+  }
 }
 
 async function analyzeJson<T>(
@@ -122,6 +184,7 @@ async function analyzeJson<T>(
   model: string,
   thinking: string,
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await pi.exec("pi", [
     "--approve",
@@ -137,7 +200,7 @@ async function analyzeJson<T>(
     thinking,
     "-p",
     prompt,
-  ], { signal: ctx.signal });
+  ], { signal });
   if (response.code !== 0) {
     throw new Error(response.stderr.trim() || `analysis Pi exited with ${response.code}`);
   }
@@ -156,31 +219,57 @@ function renderGlossary(analysis: GlossaryAnalysis): string {
   return lines.length > 0 ? `${lines.join("\n")}\n` : "# No fixed glossary entries were found.\n";
 }
 
-async function createGlossary(
+async function analyzeBook(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   model: string,
   thinking: string,
   language: string,
+  documents: DocumentInfo[],
   samples: unknown[],
   candidates: unknown[],
-): Promise<string | undefined> {
+  signal: AbortSignal,
+): Promise<AnalysisResult> {
+  const documentContext = documents.map((document) => ({
+    path: document.path,
+    title: document.title,
+    in_spine: document.in_spine,
+    is_nav: document.is_nav,
+    epub_types: document.epub_types,
+    sample: document.sample,
+  }));
   const prompt = [
-    "Return JSON only with this exact shape: {\"entries\":[{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}]}.",
-    `Create a concise translation glossary for ${language}. Keep proper names, places, institutions, and recurring technical terms only.`,
-    "Do not include generic words. Prefer one stable target rendering per source term.",
+    "Return JSON only with this exact shape:",
+    '{"target_language_code":"vi","translate":["chapter.xhtml"],"keep":["nav.xhtml"],"entries":[{"source":"...","target":"...","note":"..."}]}',
+    `Analyze this EPUB for translation into ${language}. Classify every document path exactly once into translate or keep.`,
+    "Translate reading content and user-facing navigation. Keep metadata, cover, indexes, stylesheets, and machine-only support files unless they contain user-facing prose.",
+    "Create a concise glossary from proper names, places, institutions, and recurring technical terms only. Do not include generic words.",
+    "Use one stable target rendering per source term. Return a valid BCP-47 target_language_code.",
+    `Documents:\n${JSON.stringify(documentContext)}`,
     `Candidate terms:\n${JSON.stringify(candidates)}`,
     `Sample text:\n${JSON.stringify(samples)}`,
   ].join("\n\n");
-  const analysis = await analyzeJson<GlossaryAnalysis>(pi, ctx, model, thinking, prompt);
-  const initial = renderGlossary(analysis);
-  const edited = await ctx.ui.editor("Review glossary (source = target; # starts a note)", initial);
-  if (edited === undefined) return undefined;
-  const locked = await ctx.ui.confirm(
-    "Lock glossary and start translation?",
-    "Workers will use this exact glossary for every fragment in this run.",
+  const analysis = await analyzeJson<GlossaryAnalysis>(pi, ctx, model, thinking, prompt, signal);
+  return {
+    scope: normalizeScopeAnalysis(analysis, documents),
+    glossary: renderGlossary(analysis),
+  };
+}
+
+async function withBlockingLoader<T>(
+  ctx: ExtensionContext,
+  message: string,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T | undefined> {
+  return runBlockingOperation(
+    (factory) => ctx.ui.custom(factory as never),
+    (cancel, tui, theme) => {
+      const loader = new BorderedLoader(tui as never, theme as never, message);
+      loader.onAbort = cancel;
+      return loader;
+    },
+    operation,
   );
-  return locked ? edited : undefined;
 }
 
 function safePart(value: string): string {
@@ -208,37 +297,60 @@ async function runTranslationWizard(pi: ExtensionAPI, ctx: ExtensionContext): Pr
   if (!thinking) return;
   const language = await inputValue(ctx, "Target language", "Vietnamese");
   if (!language) return;
-  const languageCode = (await inputValue(ctx, "Target language BCP-47 code", "vi"))?.toLowerCase();
-  if (!languageCode) return;
   const workers = await chooseWorkers(ctx);
   if (!workers) return;
 
   const source = resolve(ctx.cwd, "input", bookName);
-  const documents = (await runHelper(pi, ctx, ["inspect-epub", "--epub", source])) as unknown as DocumentInfo[];
-  const selectedPaths = await reviewScope(ctx, documents);
-  if (!selectedPaths || selectedPaths.length === 0) {
-    ctx.ui.notify("No XHTML document was selected; translation was not started.", "warning");
-    return;
-  }
+  const documents = await withBlockingLoader(ctx, "Reading EPUB structure…", async (signal) => (
+    await runHelper(pi, ctx, ["inspect-epub", "--epub", source], signal)
+  )) as unknown as DocumentInfo[] | undefined;
+  if (!documents) return;
 
-  const sampleResponse = await runHelper(pi, ctx, [
-    "sample-epub",
-    "--epub",
-    source,
-    "--selected-json",
-    JSON.stringify(selectedPaths),
-    "--count",
-    "6",
-  ]);
-  const samples = Array.isArray(sampleResponse) ? sampleResponse : [];
-  const candidateResponse = await runHelper(pi, ctx, [
-    "candidates",
-    "--samples-json",
-    JSON.stringify(samples.map((sample) => (sample as { sample?: string }).sample || "")),
-  ]);
-  const candidates = Array.isArray(candidateResponse) ? candidateResponse : [];
-  const glossary = await createGlossary(pi, ctx, modelIdentifier(model), thinking, language, samples, candidates);
-  if (glossary === undefined) return;
+  const allPaths = documents.map((document) => document.path);
+  const analysis = await withBlockingLoader(ctx, "AI is classifying documents and building the glossary…", async (signal) => {
+    const sampleResponse = await runHelper(pi, ctx, [
+      "sample-epub",
+      "--epub",
+      source,
+      "--selected-json",
+      JSON.stringify(allPaths),
+      "--count",
+      "6",
+    ], signal);
+    const samples = Array.isArray(sampleResponse) ? sampleResponse : [];
+    const candidateResponse = await runHelper(pi, ctx, [
+      "candidates",
+      "--samples-json",
+      JSON.stringify(samples.map((sample) => (sample as { sample?: string }).sample || "")),
+    ], signal);
+    const candidates = Array.isArray(candidateResponse) ? candidateResponse : [];
+    return analyzeBook(
+      pi,
+      ctx,
+      modelIdentifier(model),
+      thinking,
+      language,
+      documents,
+      samples,
+      candidates,
+      signal,
+    );
+  });
+  if (!analysis) return;
+
+  const languageCode = inferLanguageCode(language) || analysis.scope.targetLanguageCode ||
+    (await inputValue(ctx, "Target language BCP-47 code", "vi"))?.toLowerCase();
+  if (!languageCode) return;
+  const reviewed = await reviewPlanAndGlossary(
+    ctx,
+    language,
+    languageCode,
+    documents,
+    analysis.scope,
+    analysis.glossary,
+  );
+  if (!reviewed) return;
+  const { selectedPaths, glossary } = reviewed;
 
   const stem = basename(bookName, extname(bookName));
   const runId = `${safePart(stem)}-${safePart(languageCode)}-${Date.now()}`;
