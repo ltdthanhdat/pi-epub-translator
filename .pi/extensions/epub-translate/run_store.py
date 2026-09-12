@@ -275,6 +275,15 @@ class RunStore:
                 (int(time.time()),),
             ).rowcount == 1
 
+    def mark_failed(self, error: str) -> None:
+        with self.connection() as db:
+            db.execute(
+                """UPDATE runs SET state='failed', merge_state=CASE
+                       WHEN merge_state='leased' THEN merge_state ELSE 'failed' END,
+                       error=?, updated_at=? WHERE id=1""",
+                (error[:4000], int(time.time())),
+            )
+
     def retry_failed(self, job_ids: list[int] | None = None) -> int:
         with self.connection() as db:
             if job_ids:
@@ -333,14 +342,24 @@ class RunStore:
                 row["state"]: row["count"]
                 for row in db.execute("SELECT state, COUNT(*) AS count FROM jobs GROUP BY state")
             }
+            config = json.loads(run["config_json"])
+            retryable = db.execute(
+                "SELECT COUNT(*) FROM jobs WHERE state='failed' AND attempts < ?",
+                (int(config.get("max_attempts", 3)),),
+            ).fetchone()[0]
             total = sum(counts.values())
             return {
                 "state": run["state"],
                 "mergeState": run["merge_state"],
+                "model": config.get("model"),
+                "thinking": config.get("thinking", "high"),
+                "workers": int(config.get("workers", 1)),
+                "maxAttempts": int(config.get("max_attempts", 3)),
                 "total": total,
                 "done": counts.get("done", 0),
                 "leased": counts.get("leased", 0),
                 "failed": counts.get("failed", 0),
+                "retryable": retryable,
                 "pending": counts.get("pending", 0),
                 "startedAt": run["started_at"],
                 "cancelRequested": bool(run["cancel_requested"]),
@@ -702,6 +721,20 @@ def _run_path(run_dir: Path, value: str) -> Path:
     return path if path.is_absolute() else run_dir / path
 
 
+def inspect_epub(epub_path: Path) -> list[DocumentInfo]:
+    with tempfile.TemporaryDirectory(prefix="pi-epub-inspect-") as temporary:
+        workspace = Path(temporary)
+        _safe_extract(Path(epub_path), workspace)
+        return inspect_documents(workspace)
+
+
+def sample_epub(epub_path: Path, selected_paths: list[str], sample_count: int = 6) -> list[dict[str, object]]:
+    with tempfile.TemporaryDirectory(prefix="pi-epub-sample-") as temporary:
+        workspace = Path(temporary)
+        _safe_extract(Path(epub_path), workspace)
+        return sample_documents(workspace, selected_paths, sample_count)
+
+
 def sample_documents(workspace: Path, selected_paths: list[str], sample_count: int = 6) -> list[dict[str, object]]:
     selected = set(selected_paths)
     documents = [document for document in inspect_documents(workspace) if document.path in selected]
@@ -816,6 +849,14 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser = commands.add_parser("inspect")
     inspect_parser.add_argument("--workspace", required=True, type=Path)
 
+    inspect_epub_parser = commands.add_parser("inspect-epub")
+    inspect_epub_parser.add_argument("--epub", required=True, type=Path)
+
+    sample_epub_parser = commands.add_parser("sample-epub")
+    sample_epub_parser.add_argument("--epub", required=True, type=Path)
+    sample_epub_parser.add_argument("--selected-json", required=True)
+    sample_epub_parser.add_argument("--count", type=int, default=6)
+
     sample_parser = commands.add_parser("sample")
     sample_parser.add_argument("--workspace", required=True, type=Path)
     sample_parser.add_argument("--selected-json", required=True)
@@ -831,7 +872,7 @@ def main(argv: list[str] | None = None) -> int:
     prepare_parser.add_argument("--config-json", required=True)
     prepare_parser.add_argument("--selected-json", required=True)
 
-    for name in ("summary", "claim", "heartbeat", "complete", "fail", "cancel", "clear-cancel", "retry", "claim-merge", "merge"):
+    for name in ("summary", "claim", "heartbeat", "complete", "fail", "fail-run", "cancel", "clear-cancel", "retry", "claim-merge", "merge"):
         command_parser = commands.add_parser(name)
         if name not in {"cancel", "clear-cancel"}:
             command_parser.add_argument("--run", required=True, type=Path)
@@ -853,6 +894,8 @@ def main(argv: list[str] | None = None) -> int:
             command_parser.add_argument("--worker-id", required=True)
             command_parser.add_argument("--lease-token", required=True)
             command_parser.add_argument("--error", required=True)
+        if name == "fail-run":
+            command_parser.add_argument("--error", required=True)
         if name == "retry":
             command_parser.add_argument("--job-id", action="append", type=int)
 
@@ -860,6 +903,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "inspect":
             result = [document.as_dict() for document in inspect_documents(args.workspace)]
+        elif args.command == "inspect-epub":
+            result = [document.as_dict() for document in inspect_epub(args.epub)]
+        elif args.command == "sample-epub":
+            result = sample_epub(args.epub, json.loads(args.selected_json), args.count)
         elif args.command == "sample":
             result = sample_documents(args.workspace, json.loads(args.selected_json), args.count)
         elif args.command == "candidates":
@@ -901,6 +948,9 @@ def main(argv: list[str] | None = None) -> int:
                     args.job_id, args.worker_id, args.lease_token, args.error
                 )
             }
+        elif args.command == "fail-run":
+            RunStore(args.run / "run.sqlite").mark_failed(args.error)
+            result = {"ok": True}
         elif args.command == "cancel":
             result = {"ok": RunStore(args.run / "run.sqlite").request_cancel()}
         elif args.command == "clear-cancel":
@@ -918,6 +968,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as error:
+        if getattr(args, "command", None) == "merge":
+            try:
+                RunStore(args.run / "run.sqlite").mark_failed(str(error))
+            except Exception:
+                pass
         print(json.dumps({"error": str(error)}, ensure_ascii=False))
         return 1
 

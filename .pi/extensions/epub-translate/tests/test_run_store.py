@@ -12,6 +12,7 @@ from run_store import (
     complete_translation,
     glossary_candidates,
     inspect_documents,
+    inspect_epub,
     merge_run,
     prepare_run,
     sample_documents,
@@ -94,6 +95,29 @@ class RunStoreLifecycleTest(unittest.TestCase):
         self.assertEqual(claimed.id, retried.id)
         self.assertEqual(1, retried.attempts)
 
+    def test_mark_failed_exposes_terminal_error(self):
+        self.store.mark_failed("two attempts failed")
+
+        summary = self.store.summary()
+
+        self.assertEqual("failed", summary["state"])
+        self.assertEqual("two attempts failed", summary["error"])
+
+    def test_summary_exposes_worker_configuration_for_resume(self):
+        summary = self.store.summary()
+
+        self.assertEqual("test/model", summary["model"])
+        self.assertEqual("high", summary["thinking"])
+        self.assertEqual(2, summary["maxAttempts"])
+
+    def test_summary_reports_retryable_failed_jobs(self):
+        claimed = self.store.claim("worker-a", now=100)
+        self.assertTrue(self.store.fail(claimed.id, "worker-a", claimed.lease_token, "temporary"))
+
+        summary = self.store.summary()
+
+        self.assertEqual(1, summary["retryable"])
+
     def test_only_one_worker_can_claim_merge(self):
         first = self.store.claim("worker-a", now=100)
         second = self.store.claim("worker-b", now=100)
@@ -125,6 +149,21 @@ class RunStoreLifecycleTest(unittest.TestCase):
         self.assertGreaterEqual(candidates[0].frequency, 2)
         self.assertNotIn("https", " ".join(candidate.term for candidate in candidates))
         self.assertNotIn("42", " ".join(candidate.term for candidate in candidates))
+
+    def test_inspect_epub_reads_manifest_before_a_run_exists(self):
+        source_epub = self.tmp / "book.epub"
+        source_dir = self.tmp / "book-source"
+        write_fixture_epub(source_dir)
+        import zipfile
+        with zipfile.ZipFile(source_epub, "w") as archive:
+            for path in sorted(source_dir.rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(source_dir).as_posix(), compress_type=zipfile.ZIP_STORED if path.name == "mimetype" else zipfile.ZIP_DEFLATED)
+
+        documents = inspect_epub(source_epub)
+
+        self.assertEqual(2, len(documents))
+        self.assertTrue(any(document.is_nav is False for document in documents))
 
     def test_prepare_run_extracts_source_snapshots_glossary_and_creates_jobs(self):
         source_epub = self.tmp / "book.epub"
