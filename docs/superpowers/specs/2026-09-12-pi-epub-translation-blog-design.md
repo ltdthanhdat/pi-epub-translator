@@ -1,21 +1,26 @@
-# Design: Draft Blog for the Pi EPUB Translation Workflow
+# Design: Clean Pi EPUB Translator Repository and Draft Blog
 
 - Date: 2026-09-12
-- Status: proposed
+- Status: approved
 - Target repositories: `translator`, `obsidian`
 
 ## Decision
 
-Create an English draft article titled **I Created a Pi Workflow to Translate EPUB Books Without Losing Their Structure**. The article documents the existing Pi EPUB translation workflow and links to the renamed private GitHub repository:
+Prepare the existing private GitHub repository as a clean, reviewable Pi extension repository. Move the general EPUB translation skill to the user-level location `$HOME/.agents/skills/translating-epub-books`, remove that skill and unrelated planning history from the repository snapshot, add a README with installation and usage instructions, and publish one clean initial commit to the renamed private repository:
 
 `https://github.com/ltdthanhdat/pi-epub-translator`
 
-The `@injaneity/pi-computer-use` package is an internal capture tool only. It will not be named, linked, or presented as part of the article's subject.
+The existing commit history will be replaced by the clean snapshot after creating a local recovery bundle. The remote remains private for review.
+
+Create an English draft article titled **I Created a Pi Workflow to Translate EPUB Books Without Losing Their Structure**. The article documents the Pi extension and links to the private repository. The `@injaneity/pi-computer-use` package is an internal capture tool only; it will not be named, linked, or presented as part of the article's subject.
 
 ## Goals
 
-- Rename the existing private GitHub repository `ltdthanhdat/epub-translator` to `ltdthanhdat/pi-epub-translator`.
-- Push the current tracked `master` history to the renamed repository.
+- Move the reusable skill to `$HOME/.agents/skills/translating-epub-books` and update its internal commands to use the new absolute user-level location.
+- Keep the repository product-focused: the Pi extension, its tests/package metadata, `.gitignore`, and `README.md` only.
+- Add installation, runtime, command, sample, and testing instructions to `README.md`.
+- Replace the old local and remote repository history with one clean initial commit, without force-pushing before a recovery bundle and remote SHA check exist.
+- Rename the existing private GitHub repository from `ltdthanhdat/epub-translator` to `ltdthanhdat/pi-epub-translator` and keep it private.
 - Capture honest screenshots of the real Pi TUI workflow using the local EPUB sample.
 - Create a reviewable blog draft in the canonical Obsidian blog source.
 - Keep the draft compatible with the existing Obsidian blog CI and later publication flow.
@@ -24,23 +29,61 @@ The `@injaneity/pi-computer-use` package is an internal capture tool only. It wi
 
 - Do not create a second GitHub repository.
 - Do not publish the article yet; keep `status: draft`.
-- Do not commit or push `input/`, EPUB source files, generated output, run state, or other ignored artifacts.
+- Do not push `input/`, EPUB source files, translated output, run state, or other ignored artifacts.
+- Do not mention or link to `pi-computer-use` in the article or README.
 - Do not modify the Obsidian workflow files or unrelated dirty files.
-- Do not make `pi-computer-use` part of the product story or article dependencies.
+- Do not alter `30-resources/knowledge/raw/`.
+- Do not preserve the old commit history on the public branch after the user-approved cleanup; retain only a local recovery bundle during the operation.
 
-## Repository operation
+## Repository contents after cleanup
 
-Use `gh` to rename the existing repository, then add/update the local `origin` remote and push the current committed `master` branch. The local `.gitignore` modification is user-owned and must remain unstaged. Before pushing, verify that only committed project files are included; the ignored EPUB sample remains local.
+The clean repository snapshot contains:
 
-The expected public URL, even while the repository is private, is:
+```text
+.pi/extensions/epub-translate/
+.gitignore
+README.md
+```
 
-`https://github.com/ltdthanhdat/pi-epub-translator`
+The `.pi/extensions/epub-translate/` directory includes the existing extension source, worker helpers, package metadata, and tests. The old `.agents/skills/translating-epub-books/` directory and `docs/` planning/spec files are not part of the clean repository snapshot.
 
-If the remote contains history that cannot be fast-forwarded from the local repository, stop and report the divergence instead of force-pushing.
+## Skill migration
+
+Copy the skill to `$HOME/.agents/skills/translating-epub-books`, update the skill's command examples from the repository-relative `.agents/skills/translating-epub-books/...` path to `$HOME/.agents/skills/translating-epub-books/...`, run its Python tests from the new location, and then remove the repository copy. The Pi extension is independent of that skill and must continue to pass its own TypeScript/Python tests after the removal.
+
+## README contents
+
+`README.md` explains:
+
+- what the Pi extension does;
+- required Pi, Node.js, Python, and model/API setup;
+- how to install extension dependencies;
+- how to launch Pi with `pi --approve -e .pi/extensions/epub-translate/index.ts`;
+- the `/translate-epub`, `/epub-progress`, `/epub-cancel`, and retry workflow;
+- where to put the local EPUB sample and why input/output/run directories stay ignored;
+- how to run the extension tests;
+- the private GitHub repository URL.
+
+The README describes the extension itself, not the internal screenshot utility or the removed general-purpose skill.
+
+## Repository cleanup and history rewrite
+
+Before destructive Git operations:
+
+1. Verify the existing remote owner/name and current remote `main` SHA.
+2. Create a local recovery bundle containing the current local refs.
+3. Build a clean snapshot containing only the approved repository contents.
+4. Create one root commit with a clear message such as `Initial import: Pi EPUB translator`.
+5. Rename the existing GitHub repository in place.
+6. Verify that the renamed remote is still private and that no unexpected remote movement occurred.
+7. Force-replace only remote `main` with the clean root commit using an explicit expected-old-SHA lease; never use an unguarded `--force`.
+8. Verify the remote `main` tree, default branch, visibility, and commit count.
+
+The old history is not kept as a visible remote branch. The recovery bundle remains local until the user confirms the cleanup is no longer needed.
 
 ## Screenshot capture
 
-Install `@injaneity/pi-computer-use` through Pi only for the capture session. Use it to observe/control the local terminal/TUI and save screenshots outside the translator repository until they are selected for the article.
+Install `@injaneity/pi-computer-use` through Pi only for the capture session. Use it to observe/control the local terminal/TUI and save screenshots outside the repositories until they are selected for the article.
 
 Capture these states from the actual workflow:
 
@@ -100,13 +143,17 @@ The tone should be a first-person engineering build note, not a package advertis
 - Do not touch `30-resources/knowledge/raw/`.
 - Validate Markdown/frontmatter and the blog projection using the existing CI flow where practical. The CI source of truth remains `20-areas/writing/blog`; no generated blog repository files are edited manually.
 - Because the article remains a draft, verify that it is structurally valid without triggering publication.
+- Run the extension tests and migrated skill tests after removing the repository skill copy.
 - Later publication is a separate action: change `status` to `published`, review the resulting diff, merge to `master`, and let `publish-blog.yml` reconcile the projection.
 
 ## Acceptance criteria
 
-- Existing GitHub repository is renamed, not duplicated, and current `master` is pushed without force.
-- Translator repository does not contain the EPUB sample or generated run artifacts.
+- `$HOME/.agents/skills/translating-epub-books` exists and its tests pass.
+- The repository contains only the Pi extension tree, `.gitignore`, and `README.md` in the clean remote snapshot.
+- The old `.agents` skill and `docs/` planning files are absent from the clean remote snapshot.
+- The existing GitHub repository is renamed, remains private, and remote `main` contains exactly one clean root commit created without an unguarded force push.
+- The translator repository does not contain the EPUB sample or generated run artifacts.
 - Five truthful screenshots are stored under the article asset directory.
-- Blog draft has valid required frontmatter, the exact approved title, the private repository link, and no computer-use package mention.
+- The blog draft has valid required frontmatter, the exact approved title, the private repository link, and no computer-use package mention.
 - Obsidian's unrelated working-tree changes remain untouched.
 - Blog validation passes, or any environment limitation is reported explicitly.
