@@ -11,16 +11,24 @@ A Pi extension for translating EPUB books while preserving their HTML structure,
 
 ## Install
 
+Install the published Pi package:
+
+```bash
+pi install npm:pi-epub-translator
+```
+
+For local development:
+
 ```bash
 git clone https://github.com/ltdthanhdat/pi-epub-translator.git
 cd pi-epub-translator
-npm --prefix .pi/extensions/epub-translate install
+npm install
 ```
 
 ## Run in Pi
 
 ```bash
-pi --approve -e .pi/extensions/epub-translate/index.ts
+pi --approve -e ./src/index.ts
 ```
 
 Use `/translate-epub` to choose the EPUB, model, thinking level, target language, and worker count. The wizard then lets you review the AI document scope and glossary before starting.
@@ -40,11 +48,17 @@ Put EPUB inputs in `input/`. Generated outputs and run state live in ignored loc
 ## Test
 
 ```bash
-npm --prefix .pi/extensions/epub-translate test
-python3 .pi/extensions/epub-translate/tests/test_run_store.py
+npm test
+python3 tests/test_run_store.py
 ```
+
+## Release
+
+1. Increment `version` in `package.json`.
+2. Run the tests and `npm pack --dry-run`.
+3. Publish with `npm publish --access public`.
+4. Verify with `npm view pi-epub-translator version` and a clean `pi install npm:pi-epub-translator`.
 
 ## Repository
 
-This repository is currently private while the workflow is reviewed:
 https://github.com/ltdthanhdat/pi-epub-translator

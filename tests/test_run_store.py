@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
+sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 from run_store import (
     LEASE_SECONDS,
@@ -95,7 +95,7 @@ class RunStoreLifecycleTest(unittest.TestCase):
 
     def test_cli_summary_emits_one_machine_readable_json_object(self):
         completed = subprocess.run(
-            [sys.executable, str(Path(__file__).parents[1] / "run_store.py"), "summary", "--run", str(self.tmp)],
+            [sys.executable, str(Path(__file__).parents[1] / "src" / "run_store.py"), "summary", "--run", str(self.tmp)],
             capture_output=True,
             text=True,
             check=True,
@@ -241,7 +241,7 @@ class RunStoreLifecycleTest(unittest.TestCase):
 
     def test_cli_merge_failure_marks_run_failed(self):
         completed = subprocess.run(
-            [sys.executable, str(Path(__file__).parents[1] / "run_store.py"), "merge", "--run", str(self.tmp)],
+            [sys.executable, str(Path(__file__).parents[1] / "src" / "run_store.py"), "merge", "--run", str(self.tmp)],
             capture_output=True,
             text=True,
         )

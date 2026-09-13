@@ -7,7 +7,7 @@ import {
   parseJsonResponse,
   selectableModels,
   selectableThinkingLevels,
-} from "../wizard.ts";
+} from "../src/wizard.ts";
 
 test("selectableModels prefers Pi session-scoped models", () => {
   const scoped = [{ model: { provider: "scoped", id: "one", name: "One" }, thinkingLevel: "high" }];

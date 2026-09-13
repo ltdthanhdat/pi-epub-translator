@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatProgress } from "../progress.ts";
+import { formatProgress } from "../src/progress.ts";
 
 test("formats active progress from a SQLite summary", () => {
   assert.deepEqual(

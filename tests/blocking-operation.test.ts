@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runBlockingOperation } from "../blocking-operation.ts";
+import { runBlockingOperation } from "../src/blocking-operation.ts";
 
 test("keeps the custom loading component active until the async operation finishes", async () => {
   let component: { cancel: () => void } | undefined;

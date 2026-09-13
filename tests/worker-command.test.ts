@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildWorkerCommand, WORKER_PROMPT, WORKER_TOOL_NAMES } from "../worker-command.ts";
+import { buildWorkerCommand, WORKER_PROMPT, WORKER_TOOL_NAMES } from "../src/worker-command.ts";
 
 test("builds a fresh no-session Pi worker command with only EPUB tools", () => {
   const worker = buildWorkerCommand("/repo/.parallel-translate/book", "openai/gpt-5", "high");

@@ -35,8 +35,8 @@ export function workerId(): string {
   return process.env.EPUB_TRANSLATE_WORKER_ID || randomUUID();
 }
 
-function helperPath(ctx: ExtensionContext): string {
-  return resolve(ctx.cwd, ".pi/extensions/epub-translate/run_store.py");
+export function helperPath(): string {
+  return resolve(new URL("./run_store.py", import.meta.url).pathname);
 }
 
 export async function runHelper(
@@ -45,7 +45,7 @@ export async function runHelper(
   args: string[],
   signal?: AbortSignal,
 ): Promise<HelperResponse> {
-  const completed = await pi.exec("python3", [helperPath(ctx), ...args], { signal });
+  const completed = await pi.exec("python3", [helperPath(), ...args], { signal });
   const output = completed.stdout.trim();
   let payload: HelperResponse;
   try {

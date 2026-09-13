@@ -1,0 +1,41 @@
+{
+  "name": "pi-epub-translator",
+  "version": "0.1.2",
+  "description": "Translate EPUB books in Pi while preserving structure, styling, images, footnotes, and packaging.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ltdthanhdat/pi-epub-translator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ltdthanhdat/pi-epub-translator/issues"
+  },
+  "homepage": "https://github.com/ltdthanhdat/pi-epub-translator#readme",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "epub",
+    "translation"
+  ],
+  "files": [
+    "src/**/*.ts",
+    "src/run_store.py",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}
