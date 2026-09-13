@@ -21,7 +21,9 @@
   "files": [
     "src/**/*.ts",
     "src/run_store.py",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "assets/translate-epub-demo.gif"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
