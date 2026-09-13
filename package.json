@@ -1,6 +1,6 @@
 {
   "name": "pi-epub-translator",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Translate EPUB books in Pi while preserving structure, styling, images, footnotes, and packaging.",
   "type": "module",
   "license": "MIT",
